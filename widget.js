@@ -898,8 +898,8 @@
     var listener = detail.listener;
     var event = detail.event || {};
 
-    if (listener === 'widget-button') {
-      var button = String(event.field || event.value || '').toLowerCase();
+    if (listener === 'widget-button' || listener === 'event:test' || event.listener === 'widget-button') {
+      var button = String(event.field || event.value || (event.data && (event.data.field || event.data.value)) || detail.field || detail.value || '').toLowerCase();
       /* Some editor versions omit field/value for a button click. Treat an
          otherwise unidentified click as the chat test button. */
       if (!button) button = 'testchatbutton';
