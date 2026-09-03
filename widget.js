@@ -902,6 +902,8 @@
       var button = String(event.field || event.value || (event.data && (event.data.field || event.data.value)) || detail.field || detail.value || '').toLowerCase();
       var roleTests = { 'test-viewers':'viewers', 'test-follower':'follower', 'test-subscriber':'subscriber', 'test-moderator':'moderator', 'test-vip':'vip', 'test-streamer':'streamer' };
       if (roleTests[button]) { addMessage(roleTests[button], roleTests[button].toUpperCase() + '_TEST', 'Halo! Test role ' + roleTests[button] + '.'); return; }
+      var alertTests = { 'test-alert-follower':'followed', 'test-alert-subscriber':'subscribed', 'test-alert-tip':'tipped', 'test-alert-cheer':'cheered', 'test-alert-raid':'raided' };
+      if (alertTests[button]) { addAlert(alertTests[button], 'AlertViewer', {}); return; }
       /* Some editor versions omit field/value for a button click. Treat an
          otherwise unidentified click as the chat test button. */
       if (!button) button = 'testchatbutton';
