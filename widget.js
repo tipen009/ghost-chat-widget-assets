@@ -714,7 +714,7 @@
     msg.className = 'gc-msg gc-alert-msg gc-alert-' + type;
     msg.dataset.alert = type;
     var nameLength = String(name || 'USERNAME').trim().length;
-    var alertWidth = Math.min(94, 68 + Math.max(0, nameLength - 12) * 1.7);
+    var alertWidth = Math.min(94, 55 + Math.max(0, nameLength - 12) * 1.7);
     msg.style.setProperty('--gc-alert-width', alertWidth + '%');
 
     var card = document.createElement('div');
