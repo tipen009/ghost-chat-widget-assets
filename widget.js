@@ -1058,9 +1058,10 @@
       });
       return;
     }
-    if (listener === 'follower-latest' && event.name) {
-      followers[String(event.name).toLowerCase()] = true;
-      addAlert('followed', event.name, event);
+    var eventName = event.name || event.username || (event.data && (event.data.name || event.data.username)) || '';
+    if ((listener === 'follower-latest' || listener === 'follow-latest' || listener === 'follow') && eventName) {
+      followers[String(eventName).toLowerCase()] = true;
+      addAlert('followed', eventName, event);
       return;
     }
     if (listener === 'subscriber-latest' && event.name) return addAlert('subscribed', event.name, event);
