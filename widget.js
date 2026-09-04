@@ -38,9 +38,9 @@
     ignoreUsers: [],       // lowercase usernames, e.g. ['nightbot','streamelements']
     followerRole: true,    // style recent followers with the Follower frame
     /* spacing knobs, in Figma design units (see tuner.html) */
-    padTop: 16,            // username -> garis panel atas
-    padBottom: 22,         // baris terakhir -> garis panel bawah
-    nameGap: 2,            // username -> baris pesan pertama
+    padTop: 16,            // username -> top panel line
+    padBottom: 22,         // last line -> bottom panel line
+    nameGap: 2,            // username -> first message line
     /* animation */
     animate: true,         // master switch for every animation
     lift: true,            // older messages glide up when a new one lands
@@ -49,13 +49,12 @@
     typingSpeed: 72,       // ms between words (auto-compressed on long messages)
     typingMax: 2400,       // ms, longest total reveal for one message
     idle: true,            // breathing glow while the message sits there
-    sheen: true,           // one-shot specular sweep on arrival
     flames: true,          // flickering fire wisps on the ghost ornament
     magic: true,           // role-coloured aura + rising motes on the crystal
-    motes: 7,              // how many magic sparks per bubble
-    fullIdleMessages: 3,   // newest bubbles that keep the complete idle effects
+    motes: 5,              // how many magic sparks per bubble
+    fullIdleMessages: 2,   // newest bubbles that keep the complete idle effects
     alerts: true,          // follower/sub/cheer/tip/raid cards in the chat stack
-    alertDuration: 0       // seconds before an alert card leaves; 0 = never auto-hide
+    alertDuration: 8       // seconds before an alert card leaves; 0 = never auto-hide
   }, window.GHOST_CHAT_CONFIG || {});
 
   var EASE = 'cubic-bezier(.25,.6,.3,1)';
@@ -183,7 +182,7 @@
        unchanged and neighbouring cells overlap by a pixel instead of merely
        touching. Touching edges each antialias against transparency, and the
        two half-covered pixels read as a thin dark seam - which is exactly the
-       "9-slice garis hitam" that showed up once anything composited the
+       "9-slice black seams" that showed up once anything composited the
        frame. Overlapping removes the seam at its source, so it can no longer
        come back on a filter, an opacity fade, or a fractional transform. */
     var BLEED = 1;
@@ -444,12 +443,6 @@
     // flames paint on top of the ghost body
     buildFlames(role, phase).forEach(function (f) { anim.appendChild(f); });
 
-    if (anims() && CFG.sheen !== false) {
-      var sheen = document.createElement('div');
-      sheen.className = 'gc-sheen';
-      anim.appendChild(sheen);
-    }
-
     var body = document.createElement('div');
     body.className = 'gc-body';
     var head = document.createElement('div');
@@ -511,7 +504,6 @@
          the base plate: base 900 | crystal 340+800 | ghost 540+780 |
          sparks & flames 900+620 = 1520ms. */
       var inMs = 1560;
-      var sheenMs = CFG.sheen !== false ? 1610 : 0;   // sheen delay + duration
       setTimeout(function () {
         anim.classList.remove('gc-enter');
         if (CFG.idle !== false) {
@@ -521,7 +513,7 @@
             anim.classList.remove('gc-handoff');
           }, 240);
         }
-      }, Math.max(inMs, sheenMs));                    // wait out the sheen too
+      }, inMs);
       if (msg._typingMs) {
         setTimeout(function () { text.classList.remove('gc-typing'); }, msg._typingMs);
       }
@@ -619,7 +611,7 @@
       var startTop = Math.round(dy + currentTop);
       el.style.top = startTop + 'px';
       el.classList.add('gc-lifting');
-      var stagger = Math.min(i, 5);
+      var stagger = Math.min(i, 8);
       maxLiftMs = Math.max(maxLiftMs, (CFG.liftDuration || 340) + stagger * 28);
       if (stagger) el.classList.add('gc-lift-stagger-' + stagger);
       requestAnimationFrame(function () {
@@ -665,6 +657,58 @@
     return '';
   }
 
+  /* Per-tier intensity. A free follow should not land like a big tip, so the
+     number of motes and shockwave rings escalates with the weight of the
+     event. Colour and glow strength are handled in CSS via --gc-alert-color
+     and --gc-alert-glow. */
+  var ALERT_TIER = {
+    followed:   { motes: 4,  rings: 0, holdBonus: 0 },
+    subscribed: { motes: 7,  rings: 1, holdBonus: 0 },
+    tipped:     { motes: 10, rings: 2, holdBonus: 2 },
+    raided:     { motes: 10, rings: 2, holdBonus: 2 }
+  };
+  var ALERT_TIER_DEFAULT = { motes: 6, rings: 1, holdBonus: 0 };
+  var alertSeq = 0;
+
+  function tierOf(type) { return ALERT_TIER[type] || ALERT_TIER_DEFAULT; }
+
+  /* The FX layer is a SIBLING of the card, never a child: the card sets
+     contain:paint, which would clip an aura that has to bleed past the
+     artwork edge. Motes are spread with the same golden-ratio phase trick the
+     chat bubbles use, so two alerts in a row never burst identically.
+     Everything here is one-shot and animates transform/opacity only. */
+  function buildAlertFx(type) {
+    var tier = tierOf(type);
+    var fx = document.createElement('div');
+    fx.className = 'gc-alert-fx';
+    if (CFG.magic === false) return fx;
+
+    var aura = document.createElement('span');
+    aura.className = 'gc-alert-aura';
+    fx.appendChild(aura);
+
+    for (var r = 0; r < tier.rings; r++) {
+      var ring = document.createElement('span');
+      ring.className = 'gc-alert-ring' + (r ? ' gc-alert-ring-2' : '');
+      fx.appendChild(ring);
+    }
+
+    var total = Math.max(0, Math.min(14, tier.motes));
+    var phase = (alertSeq = (alertSeq + 0.618033988749895) % 1);
+    for (var i = 0; i < total; i++) {
+      var t = total > 1 ? i / (total - 1) : 0.5;
+      var mote = document.createElement('span');
+      mote.className = 'gc-alert-mote';
+      mote.style.setProperty('--mx', (-30 + t * 60).toFixed(1));
+      mote.style.setProperty('--ms', (3.5 + ((i * 7) % 5)).toFixed(1));
+      mote.style.setProperty('--mdrift', (((i % 3) - 1) * 10 + 4).toFixed(1));
+      mote.style.setProperty('--mdur', (1.15 + ((i * 5) % 7) * 0.11).toFixed(2) + 's');
+      mote.style.setProperty('--mdelay', (0.26 + i * 0.055 + phase * 0.12).toFixed(2) + 's');
+      fx.appendChild(mote);
+    }
+    return fx;
+  }
+
   function buildAlert(type, name, label) {
     var msg = document.createElement('div');
     msg.className = 'gc-msg gc-alert-msg gc-alert-' + type;
@@ -704,6 +748,7 @@
     card.appendChild(art);
     card.appendChild(copy);
     msg.appendChild(card);
+    msg.appendChild(buildAlertFx(type));
 
     msg._anim = card;
     msg._relayout = function () {};
@@ -716,14 +761,26 @@
           requestAnimationFrame(function () {
             card.classList.remove('gc-alert-pending');
             card.classList.add('gc-alert-enter');
+            /* Hold gc-alert-enter until the LAST one-shot beat is done. The
+               mote burst is the slowest at roughly 2.7s; dropping the class
+               earlier would kill those animations mid-flight. */
             setTimeout(function () {
               card.classList.remove('gc-alert-enter');
               card.classList.add('gc-alert-idle');
-            }, anims() ? 760 : 0);
+            }, anims() ? 2700 : 0);
           });
         });
       };
-      if (artwork.decode) artwork.decode().then(start, start);
+      if (artwork.decode) {
+        artwork.decode().then(start, start);
+        /* Safety net. decode() can stall - it never settled when several
+           alerts were fired in the same tick - and because the card starts
+           at visibility:hidden, a stalled decode means an alert that is
+           NEVER shown at all. The bitmap is already complete by this point,
+           so starting without the decode hint only risks one soft frame,
+           which is far better than a silently dropped event. */
+        setTimeout(start, 300);
+      }
       else if (artwork.complete) start();
       else artwork.addEventListener('load', start, { once:true });
     };
@@ -741,7 +798,9 @@
     if (liftMs > 0) setTimeout(msg._play, liftMs);
     else msg._play();
     pruneToCanvas(list);
-    if (CFG.alertDuration > 0) setTimeout(function () { remove(msg); }, CFG.alertDuration * 1000);
+    /* Bigger events linger a little longer before leaving. */
+    var hold = CFG.alertDuration > 0 ? CFG.alertDuration + tierOf(type).holdBonus : 0;
+    if (hold > 0) setTimeout(function () { remove(msg); }, hold * 1000);
     return msg;
   }
 
@@ -883,12 +942,17 @@
     if (fd.typing !== undefined) CFG.typing = fd.typing === 'yes' || fd.typing === true;
     if (fd.typingSpeed !== undefined) CFG.typingSpeed = parseFloat(fd.typingSpeed);
     if (fd.idle !== undefined) CFG.idle = fd.idle === 'yes' || fd.idle === true;
-    if (fd.sheen !== undefined) CFG.sheen = fd.sheen === 'yes' || fd.sheen === true;
     if (fd.flames !== undefined) CFG.flames = fd.flames === 'yes' || fd.flames === true;
     if (fd.magic !== undefined) CFG.magic = fd.magic === 'yes' || fd.magic === true;
     if (fd.motes !== undefined) CFG.motes = parseInt(fd.motes, 10);
     if (fd.alerts !== undefined) CFG.alerts = fd.alerts === 'yes' || fd.alerts === true;
     if (fd.alertDuration !== undefined) CFG.alertDuration = parseFloat(fd.alertDuration);
+    /* These four were exposed in FIELDS but never read, so editing them did
+       nothing. The test buttons below use them now. */
+    if (fd.testChatUsername) CFG.testChatUsername = String(fd.testChatUsername);
+    if (fd.testChatMessage) CFG.testChatMessage = String(fd.testChatMessage);
+    if (fd.testAlertName) CFG.testAlertName = String(fd.testAlertName);
+    if (fd.testAlertType) CFG.testAlertType = String(fd.testAlertType);
     ensureRoot();
     applyStyleVars();
   });
@@ -899,22 +963,78 @@
     var event = detail.event || {};
 
     if (listener === 'widget-button' || listener === 'event:test' || event.listener === 'widget-button') {
-      var button = String(event.field || event.value || (event.data && (event.data.field || event.data.value)) || detail.field || detail.value || '').toLowerCase();
-      var roleTests = { 'test-viewers':'viewers', 'test-follower':'follower', 'test-subscriber':'subscriber', 'test-moderator':'moderator', 'test-vip':'vip', 'test-streamer':'streamer' };
-      if (roleTests[button]) { addMessage(roleTests[button], roleTests[button].toUpperCase() + '_TEST', 'Halo! Test role ' + roleTests[button] + '.'); return; }
-      var alertTests = { 'test-alert-follower':'followed', 'test-alert-subscriber':'subscribed', 'test-alert-tip':'tipped', 'test-alert-cheer':'cheered', 'test-alert-raid':'raided' };
-      if (alertTests[button]) { addAlert(alertTests[button], 'AlertViewer', {}); return; }
-      /* Some editor versions omit field/value for a button click. Treat an
-         otherwise unidentified click as the chat test button. */
-      if (!button) button = 'testchatbutton';
-      if (button === 'testchatbutton' || button === 'test-chat' || button.indexOf('testchat') > -1 || button === 'chat') {
-        addMessage('viewers', 'TestViewer', 'Halo chat! Ini pesan percobaan.');
-      } else if (button === 'testalertbutton' || button === 'test-alert' || button.indexOf('testalert') > -1 || button === 'alert') {
-        addAlert('followed', 'AlertViewer', {});
-      } else {
-        /* Unknown button payloads are still treated as a chat test. */
-        addMessage('viewers', 'TestViewer', 'Halo chat! Ini pesan percobaan.');
+      /* The old code only matched the button's VALUE ("test-subscriber").
+         StreamElements actually sends the FIELD KEY ("testSubscriberButton")
+         in most editor versions, so every role button missed the lookup and
+         fell through to the generic chat fallback - which is why "Test role -
+         Subscriber" kept rendering a plain Viewers bubble. Match on every
+         payload shape at once by joining them into one haystack. */
+      var hay = [
+        event.field, event.value,
+        event.data && event.data.field, event.data && event.data.value,
+        detail.field, detail.value
+      ].map(function (v) { return v == null ? '' : String(v).toLowerCase(); })
+       .join(' ');
+      var has = function (s) { return hay.indexOf(s) > -1; };
+
+      if (has('clear')) {
+        var root = ensureRoot();
+        while (root.firstChild) root.removeChild(root.firstChild);
+        return;
       }
+
+      var alertName = CFG.testAlertName || 'AlertViewer';
+      var alertArgs = { followed:{}, subscribed:{}, cheered:{ amount:500 },
+                        tipped:{ amount:250000, currency:'IDR' }, raided:{ viewers:128 } };
+
+      if (has('alert')) {
+        /* "all" first: test-all-alerts also contains "alert". */
+        if (has('all')) {
+          ['followed','subscribed','cheered','tipped','raided'].forEach(function (t, i) {
+            setTimeout(function () { addAlert(t, alertName, alertArgs[t]); }, i * 1400);
+          });
+          return;
+        }
+        /* Longest / most specific keyword first: "test-alert-subscriber"
+           contains "sub", so a naive order would mis-route it. */
+        var at = has('raid') ? 'raided'
+               : has('cheer') ? 'cheered'
+               : has('tip') ? 'tipped'
+               : has('sub') ? 'subscribed'
+               : has('follow') ? 'followed'
+               : (CFG.testAlertType || 'followed');
+        addAlert(at, alertName, alertArgs[at] || {});
+        return;
+      }
+
+      /* Role keywords, again most specific first. "streamer" must beat
+         "stream", and "subscriber" must be checked before "sub". */
+      var role = has('streamer') ? 'streamer'
+               : has('moderator') || has('mod') ? 'moderator'
+               : has('subscriber') || has('sub') ? 'subscriber'
+               : has('follower') || has('follow') ? 'follower'
+               : has('vip') ? 'vip'
+               : has('viewer') ? 'viewers'
+               : '';
+
+      var SAMPLE = {
+        viewers:    'Hey chat! This is a test message.',
+        follower:   'Just followed, your content is awesome!',
+        subscriber: 'Month 6 of my sub! Good luck today.',
+        moderator:  'Please keep it civil in chat, rules are on the panel below the stream.',
+        vip:        'Thanks for the giveaway last week, still hyped about it!',
+        streamer:   'Welcome in everyone, we are live!'
+      };
+
+      if (role) {
+        addMessage(role, role.toUpperCase() + '_TEST', SAMPLE[role]);
+        return;
+      }
+
+      /* Anything unrecognised - including editor versions that send no
+         field/value at all for a click - is treated as the chat test. */
+      addMessage('viewers', CFG.testChatUsername || 'TestViewer',
+                 CFG.testChatMessage || SAMPLE.viewers);
       return;
     }
 

@@ -1,0 +1,625 @@
+/* Ghost Cave Twitch Chat Widget - StreamElements
+   Frame = inline SVG, 9-slice stretch. No PNG anywhere.
+
+   ENTRANCE MODEL
+   The base plate and the ornaments no longer share one entrance.
+     base   : the rock frame rises and fades in on its own
+     crystal: spawns with a pop, wrapped in a magic flash + shockwave ring
+     ghost  : pops in slightly later
+     flames : ignite after the ghost has landed
+     sparks : the blink ornaments fade in last
+   Each layer hands off to its idle loop on a VALUE-IDENTICAL frame, so the
+   switch from entrance to idle is never visible.
+
+   NOTE: no CSS filter is ever applied to the frame subtree. A filter forces
+   the 9-slice group into an offscreen buffer and the slice seams reappear.
+   Filters on the ornaments are fine, they are plain single SVGs.
+
+   RASTER RULE (fixes the "blurry during entrance, crisp afterwards" bug)
+   Chromium/OBS pins a composited layer's raster scale to the transform it
+   has when the animation starts, then GPU-scales the cached bitmap. Any
+   keyframe that grows artwork (scale .3 -> 1) therefore renders a 30%-res
+   bitmap stretched to full size = blur, and snaps sharp the instant the
+   animation ends and the layer is re-rastered. So: SVG artwork is NEVER
+   scaled above 1 anywhere, in entrances or in idle loops. Pops now settle
+   DOWN from a slightly oversized value, which rasters at the large size and
+   downsamples - always sharp. Only gradient/border layers (aura, ring,
+   motes) are allowed to scale up, because a soft gradient has no detail to
+   lose.
+
+   BLEND RULE (fixes the frame drops)
+   mix-blend-mode is not used. It forces .gc-anim - including the whole
+   nine-cell SVG frame - into an offscreen group that is re-composited on
+   every animation frame, for every bubble on screen. The glow/aura sit
+   behind the frame anyway, so plain compositing looks the same.
+   ------------------------------------------------------------------- */
+
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Crimson+Pro:wght@400;600&display=swap');
+
+:root {
+  --gc-scale: 0.58;              /* 1 = original Figma size (948 x 225) */
+  --u: calc(1px * var(--gc-scale));
+  --gc-width: 560px;
+  --gc-min-width: 420px;
+  --gc-gap: 14px;
+  --gc-name-font: 'Cinzel', Georgia, serif;
+  --gc-text-font: 'Crimson Pro', Georgia, serif;
+  --gc-text-color: #FCFCFC;
+  --gc-text-shadow: 0 2px 4px rgba(0,0,0,.85);
+
+  --gc-anim-in: 900ms;           /* base plate only */
+  --gc-anim-out: 720ms;
+
+  --gc-ease: cubic-bezier(.25,.6,.3,1);
+  --gc-ease-soft: cubic-bezier(.4,.35,.25,1);
+  /* the only place overshoot is allowed: ornaments are not 9-sliced, so a
+     springy landing cannot reopen a slice seam */
+  --gc-ease-pop: cubic-bezier(.22,.92,.36,1);
+
+  --gc-glow-rest: .22;
+  --gc-glow-peak: .50;
+}
+
+html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
+
+#gc-defs { position:absolute; width:0; height:0; overflow:hidden; }
+
+#gc-chat {
+  position:absolute; left:0; bottom:0;
+  width:max(var(--gc-min-width), var(--gc-width));
+  display:flex; flex-direction:column; justify-content:flex-end;
+  gap:var(--gc-gap);
+  padding: calc(45*var(--u)) calc(50*var(--u)) calc(95*var(--u)) calc(85*var(--u));
+  box-sizing:border-box; overflow:visible;
+}
+#gc-chat.gc-top { top:0; bottom:auto; justify-content:flex-start; }
+
+.gc-msg {
+  position:relative; width:fit-content; max-width:100%; align-self:flex-start;
+  flex:0 0 auto;
+  min-height: calc(225*var(--u));
+  overflow:visible;
+}
+.gc-msg.gc-lifting {
+  transition:top var(--gc-anim-lift,340ms) cubic-bezier(.25,.75,.25,1);
+}
+.gc-msg.gc-lifting.gc-lift-stagger-1 { transition-delay:28ms; }
+.gc-msg.gc-lifting.gc-lift-stagger-2 { transition-delay:56ms; }
+.gc-msg.gc-lifting.gc-lift-stagger-3 { transition-delay:84ms; }
+.gc-msg.gc-lifting.gc-lift-stagger-4 { transition-delay:112ms; }
+.gc-msg.gc-lifting.gc-lift-stagger-5 { transition-delay:140ms; }
+/* maxMessages defaults to 8, so 6-8 needed their own steps - without these
+   the bottom three bubbles all lifted on the same frame. */
+.gc-msg.gc-lifting.gc-lift-stagger-6 { transition-delay:168ms; }
+.gc-msg.gc-lifting.gc-lift-stagger-7 { transition-delay:196ms; }
+.gc-msg.gc-lifting.gc-lift-stagger-8 { transition-delay:224ms; }
+
+/* Event alerts share the chat stack, but keep their original Figma ratio.
+   The full SVG never moves or scales during animation, which keeps its fine
+   rock/crystal paths sharp in OBS and Chromium. */
+.gc-alert-msg {
+  width:var(--gc-alert-width,68%); max-width:100%; min-height:0;
+  align-self:center; aspect-ratio:757 / 357;
+  /* Event colour drives the aura, ring and motes. --gc-alert-glow is the tier
+     multiplier: a follow should not shine as hard as a big tip. */
+  --gc-alert-color:#986AFA; --gc-alert-glow:1;
+}
+.gc-alert-msg.gc-alert-followed   { --gc-alert-color:#B8FFFF; --gc-alert-glow:.72; }
+.gc-alert-msg.gc-alert-subscribed { --gc-alert-color:#B148FE; --gc-alert-glow:1; }
+.gc-alert-msg.gc-alert-tipped     { --gc-alert-color:#F6A124; --gc-alert-glow:1.35; }
+.gc-alert-msg.gc-alert-raided     { --gc-alert-color:#00DFFF; --gc-alert-glow:1.35; }
+.gc-alert-msg.gc-alert-tipped { aspect-ratio:757 / 362; }
+.gc-alert-card {
+  position:relative; display:block; width:100%; height:100%; z-index:1;
+  isolation:isolate; opacity:1; contain:layout paint;
+}
+.gc-alert-card.gc-alert-pending { visibility:hidden; opacity:0; }
+.gc-alert-art, .gc-alert-art svg, .gc-alert-art .gc-alert-svg {
+  display:block; width:100%; height:100%; overflow:visible;
+}
+.gc-alert-copy {
+  position:absolute; z-index:2; left:36%; top:37%; width:44%;
+  color:#B5C1DC; text-align:center; pointer-events:none;
+  text-shadow:0 2px 5px rgba(0,0,0,.9);
+}
+.gc-alert-name {
+  overflow:hidden; color:inherit; font:700 calc(32*var(--u) - 1px)/1 var(--gc-name-font);
+  letter-spacing:.035em; text-overflow:ellipsis; white-space:nowrap;
+}
+.gc-alert-label {
+  margin-top:calc(27*var(--u)); color:inherit;
+  font:600 calc(13*var(--u) + 2px)/1 var(--gc-name-font);
+  letter-spacing:.06em; white-space:nowrap;
+}
+.gc-alert-tipped .gc-alert-copy { color:#FEDB54; top:38%; }
+.gc-alert-raided .gc-alert-copy { color:#8EF0FE; }
+.gc-alert-card::after {
+  content:""; position:absolute; z-index:1; right:3%; bottom:5%;
+  width:25%; aspect-ratio:1; border-radius:50%; pointer-events:none;
+  background:radial-gradient(circle, currentColor 0%, transparent 68%);
+  color:var(--gc-alert-color,#986AFA); opacity:0;
+}
+
+/* --- alert magic FX layer -------------------------------------------
+   The aura, shockwave rings and motes live OUTSIDE .gc-alert-card on
+   purpose: the card sets contain:paint, which would clip anything that has
+   to bleed past the artwork edge. The card keeps z-index 1 so the FX always
+   sit behind the rock frame, exactly like the chat bubble's magic layer. */
+.gc-alert-fx { position:absolute; inset:0; z-index:0; pointer-events:none; overflow:visible; }
+.gc-alert-aura {
+  position:absolute; inset:-14% -8%; border-radius:50%;
+  background:radial-gradient(closest-side,
+             var(--gc-alert-color,#986AFA) 0%,
+             color-mix(in srgb, var(--gc-alert-color,#986AFA) 45%, transparent) 44%,
+             transparent 76%);
+  opacity:0; will-change:transform, opacity;
+}
+.gc-alert-ring {
+  position:absolute; inset:4% 1%; border-radius:50%;
+  border:calc(2*var(--u)) solid var(--gc-alert-color,#986AFA);
+  opacity:0;
+}
+.gc-alert-mote {
+  position:absolute; left:50%; bottom:12%;
+  width:calc(var(--ms,5) * 3 * var(--u)); height:calc(var(--ms,5) * 3 * var(--u));
+  margin-left:calc((var(--mx,0) - var(--ms,5)) * var(--u));
+  background:radial-gradient(circle closest-side,
+             var(--gc-alert-color,#986AFA) 0%,
+             var(--gc-alert-color,#986AFA) 24%,
+             color-mix(in srgb, var(--gc-alert-color,#986AFA) 40%, transparent) 48%,
+             transparent 78%);
+  opacity:0;
+}
+
+/* --- alert entrance: three beats ------------------------------------
+   1. 0-160ms   impact: aura bursts open behind the card while the card
+                itself drops in from 38u below.
+   2. 160-620ms settle: the card lands with a 9u overshoot and scale
+                1.05 -> 1. Scaling DOWN is the whole trick - Chromium
+                rasters the layer at the largest scale of the animation
+                (1.05) and only ever downsamples it, so the artwork stays
+                sharp instead of the old blur-then-snap.
+   3. 300ms+    reveal: name, then label, then motes drifting off the
+                crystal. Every beat is transform/opacity only.
+   Nothing in here scales above 1 except the aura and rings, which are soft
+   gradients and borders with no fine detail to lose. */
+.gc-alert-card.gc-alert-enter { opacity:1; transform-origin:center; animation:gc-alert-pop-in 620ms cubic-bezier(.18,.88,.28,1) both; }
+.gc-alert-card.gc-alert-enter .gc-alert-name  { animation:gc-alert-name-in 420ms 300ms var(--gc-ease-pop) both; }
+.gc-alert-card.gc-alert-enter .gc-alert-label { animation:gc-alert-label-in 380ms 430ms var(--gc-ease) both; }
+.gc-alert-card.gc-alert-enter::after { animation:gc-alert-magic-pop 560ms 200ms cubic-bezier(.22,.92,.36,1) both; }
+.gc-alert-card.gc-alert-idle::after  { animation:gc-alert-magic-idle 4.8s ease-in-out infinite; }
+.gc-alert-card.gc-alert-enter ~ .gc-alert-fx .gc-alert-aura   { animation:gc-alert-aura-burst 760ms ease-out both; }
+.gc-alert-card.gc-alert-idle  ~ .gc-alert-fx .gc-alert-aura   { animation:gc-alert-aura-idle 6.2s ease-in-out infinite; }
+.gc-alert-card.gc-alert-enter ~ .gc-alert-fx .gc-alert-ring   { animation:gc-alert-ring-out 820ms cubic-bezier(.2,.75,.3,1) 90ms both; }
+.gc-alert-card.gc-alert-enter ~ .gc-alert-fx .gc-alert-ring-2 { animation-delay:270ms; }
+.gc-alert-card.gc-alert-enter ~ .gc-alert-fx .gc-alert-mote   { animation:gc-alert-mote-rise var(--mdur,1.5s) linear var(--mdelay,0s) both; }
+.gc-alert-card.gc-leave { animation:gc-alert-out 560ms var(--gc-ease-soft) both; }
+.gc-alert-card.gc-leave ~ .gc-alert-fx { animation:gc-alert-fx-out 420ms ease-out both; }
+
+/* CRISP RULE: scale must NEVER exceed 1 on any layer that holds sharp detail
+   (artwork, text). The compositor rasters the layer once and then resamples
+   it for every frame of the animation, so scale > 1 is an UPSAMPLE = visible
+   blur that only clears up when the animation ends and the layer is
+   re-rastered. That is exactly the "blurry, then suddenly sharp" artefact.
+   Scale < 1 is a downsample, which never blurs. So the pop now grows from
+   .955 up INTO 1 instead of shrinking down from above; the overshoot is
+   carried by translate only, which does not resample at all. */
+@keyframes gc-alert-pop-in {
+  0%   { transform:translate3d(0,calc(38*var(--u)),0) scale(.955) }
+  58%  { transform:translate3d(0,calc(-9*var(--u)),0) scale(1) }
+  80%  { transform:translate3d(0,calc(2*var(--u)),0)  scale(1) }
+  100% { transform:translate3d(0,0,0) scale(1) }
+}
+/* The name is the star of an alert, so it gets its own beat: a small
+   downward settle plus scale .94 -> 1. Text is the worst possible thing to
+   upsample, so this grows into place instead of shrinking down from 1.06.
+   letter-spacing was rejected here on purpose - animating it relayouts the
+   text every frame and can flash the ellipsis on long usernames. */
+@keyframes gc-alert-name-in {
+  0%   { opacity:0; transform:translateY(calc(6*var(--u))) scale(.94) }
+  100% { opacity:1; transform:translateY(0) scale(1) }
+}
+@keyframes gc-alert-label-in {
+  0%   { opacity:0; transform:translateY(calc(-4*var(--u))) }
+  100% { opacity:1; transform:translateY(0) }
+}
+@keyframes gc-alert-aura-burst {
+  0%   { opacity:0; transform:scale(.42) }
+  30%  { opacity:calc(var(--gc-alert-glow,1) * .50); transform:scale(1.10) }
+  100% { opacity:calc(var(--gc-alert-glow,1) * .16); transform:scale(.96) }
+}
+@keyframes gc-alert-aura-idle {
+  0%,100% { opacity:calc(var(--gc-alert-glow,1) * .16); transform:scale(.96) }
+  50%     { opacity:calc(var(--gc-alert-glow,1) * .30); transform:scale(1.06) }
+}
+@keyframes gc-alert-ring-out {
+  0%   { opacity:0; transform:scale(.28) }
+  20%  { opacity:calc(var(--gc-alert-glow,1) * .55) }
+  100% { opacity:0; transform:scale(1.9) }
+}
+@keyframes gc-alert-mote-rise {
+  0%   { opacity:0; transform:translate3d(0,0,0) scale(.45) }
+  14%  { opacity:.95 }
+  55%  { transform:translate3d(calc(var(--mdrift,6) * var(--u)), calc(-42*var(--u)), 0) scale(1) }
+  80%  { opacity:.42 }
+  100% { opacity:0; transform:translate3d(calc(var(--mdrift,6) * -0.5 * var(--u)), calc(-78*var(--u)), 0) scale(.3) }
+}
+@keyframes gc-alert-magic-pop {
+  0%   { opacity:0; transform:scale(.55) }
+  60%  { opacity:calc(var(--gc-alert-glow,1) * .34); transform:scale(1) }
+  100% { opacity:calc(var(--gc-alert-glow,1) * .20); transform:scale(.96) }
+}
+@keyframes gc-alert-magic-idle {
+  0%,100% { opacity:calc(var(--gc-alert-glow,1) * .10) }
+  50%     { opacity:calc(var(--gc-alert-glow,1) * .20) }
+}
+/* Exit now moves. It used to be a bare opacity fade, which read as the card
+   being deleted rather than leaving. */
+@keyframes gc-alert-out {
+  0%   { opacity:1; transform:translate3d(0,0,0) scale(1) }
+  100% { opacity:0; transform:translate3d(0,calc(14*var(--u)),0) scale(.985) }
+}
+@keyframes gc-alert-fx-out { from{opacity:1} to{opacity:0} }
+
+.gc-anim { position:relative; display:block; }
+.gc-anim.gc-pending { visibility:hidden; opacity:0; }
+.gc-anim.gc-handoff .gc-orn-crystal,
+.gc-anim.gc-handoff .gc-orn-ghost,
+.gc-anim.gc-handoff .gc-flame,
+.gc-anim.gc-handoff .gc-aura,
+.gc-anim.gc-handoff .gc-orn-blinkCrystal,
+.gc-anim.gc-handoff .gc-orn-blinkGhost {
+  transition:transform 220ms ease-out, opacity 220ms ease-out;
+}
+.gc-anim.gc-idle:not(.gc-idle-ready) .gc-orn-blinkCrystal,
+.gc-anim.gc-idle:not(.gc-idle-ready) .gc-orn-blinkGhost {
+  animation-play-state:paused;
+  opacity:.28;
+}
+.gc-anim.gc-idle-ready .gc-orn-blinkCrystal { animation-delay:0s; }
+.gc-anim.gc-idle-ready .gc-orn-blinkGhost { animation-delay:-2.3s; }
+.gc-orn-blinkCrystal,
+.gc-orn-blinkGhost { transition:opacity 260ms ease-out; }
+.gc-anim.gc-leave { will-change:transform,opacity; animation: gc-out var(--gc-anim-out) var(--gc-ease-soft) both; }
+@keyframes gc-out {
+  0%   { opacity:1; transform:translate3d(0,0,0); }
+  100% { opacity:0; transform:translate3d(0, calc(-14*var(--u)), 0); }
+}
+
+/* ---------------------------------------------------------------------
+   1. BASE PLATE
+   The rock frame is the only thing that plays the "message arrived" move.
+   --------------------------------------------------------------------- */
+.gc-frame {
+  position:absolute; inset:0; width:100%; height:100%;
+  overflow:visible; pointer-events:none; z-index:1;
+}
+.gc-anim.gc-enter .gc-frame { animation: gc-in var(--gc-anim-in) var(--gc-ease) both; }
+@keyframes gc-in {
+  0%   { opacity:0; }
+  60%  { opacity:1; }
+  100% { opacity:1; }
+}
+
+/* text block follows the plate a beat later */
+.gc-anim.gc-enter .gc-body { animation: gc-rise 700ms var(--gc-ease) 240ms both; }
+@keyframes gc-rise {
+  from { opacity:0; }
+  to   { opacity:1; }
+}
+
+/* ---------------------------------------------------------------------
+   2. (removed) Sheen - the specular sweep is gone by request. It was one
+   more full-width layer painted over the panel on every arrival and it
+   competed with the crystal spawn.
+   --------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------
+   3. Role glow. Enter FINISHES on --gc-glow-rest and the idle loop STARTS
+   on it, so the class swap is invisible.
+   --------------------------------------------------------------------- */
+.gc-glow {
+  position:absolute; z-index:0; pointer-events:none; opacity:0;
+  left:calc(-40*var(--u)); top:calc(30*var(--u));
+  width:calc(300*var(--u)); height:calc(190*var(--u));
+  background:radial-gradient(closest-side, var(--gc-role-color,#B5C1DC), transparent 72%);
+}
+.gc-anim.gc-enter .gc-glow { animation: gc-glow-in var(--gc-anim-in) var(--gc-ease) both; }
+@keyframes gc-glow-in { from{opacity:0} to{opacity:var(--gc-glow-rest)} }
+.gc-anim.gc-idle .gc-glow { animation: gc-breathe 9s ease-in-out infinite; }
+@keyframes gc-breathe {
+  0%,100% { opacity:var(--gc-glow-rest) }
+  50%     { opacity:var(--gc-glow-peak) }
+}
+
+/* ---------------------------------------------------------------------
+   4. ORNAMENTS - each gets its own entrance, then its own idle loop.
+   --------------------------------------------------------------------- */
+.gc-orn { position:absolute; overflow:visible; pointer-events:none; z-index:3; }
+/* Promote only the two layers that animate transform+opacity forever, so the
+   compositor owns them and the rock frame is left alone. */
+.gc-orn-crystal, .gc-orn-ghost { will-change:transform; }
+
+/* --- crystal: spawn + magic flash ----------------------------------
+   The client brief's two hero animations live here and are kept in full.
+   The scale range is shifted rather than inverted: rest is .965 and the peak
+   is 1, so the crystal still swells OUTWARD like a breath (the previous
+   1 -> .965 range only ever deflated, which read as shrinking) while never
+   exceeding scale 1 and never being raster-upscaled. */
+.gc-orn-crystal { animation: gc-crystal-breathe 6.4s ease-in-out infinite; }
+@keyframes gc-crystal-breathe {
+  0%,100% { transform:scale(.965) translateY(0) }
+  50%     { transform:scale(1)    translateY(calc(-2*var(--u))) }
+}
+/* pop AND flash together: the flash is the "highlight magis" over the spawn.
+   Settles DOWN from 1.16 -> 1 so the bitmap is rastered at the biggest size
+   of the animation and only ever downsampled. Paired with the aura burst and
+   the shockwave ring, it still reads as a magical spawn. */
+.gc-anim.gc-enter .gc-orn-crystal {
+  animation: gc-pop-crystal 800ms var(--gc-ease-pop) 340ms both;
+}
+/* Grows into place (.86 -> 1) rather than shrinking in from 1.16: see the
+   CRISP RULE above. The crystal is the sharpest art in the bubble, so it was
+   the most visible victim of the upsample blur. */
+@keyframes gc-pop-crystal {
+  0%   { opacity:0; transform:scale(.86) translateY(calc(10*var(--u))) }
+  46%  { opacity:1; transform:scale(1) translateY(calc(-3*var(--u))) }
+  76%  { opacity:1; transform:scale(.955) translateY(calc(1*var(--u))) }
+  100% { opacity:1; transform:scale(.965) translateY(0) }   /* == breathe 0% */
+}
+
+/* --- ghost: pops in after the crystal ------------------------------ */
+.gc-orn-ghost { animation: gc-float 7.5s ease-in-out infinite; }
+@keyframes gc-float {
+  0%,100% { transform:translateY(calc(-2*var(--u))) }
+  50%     { transform:translateY(calc(4*var(--u))) }
+}
+.gc-anim.gc-enter .gc-orn-ghost {
+  animation: gc-pop-ghost 780ms var(--gc-ease-pop) 540ms both;
+}
+@keyframes gc-pop-ghost {
+  0%   { opacity:0; transform:scale(.9) translateY(calc(12*var(--u))) }
+  55%  { opacity:1; transform:scale(1) translateY(calc(-4*var(--u))) }
+  78%  { opacity:1; transform:scale(.995) translateY(calc(1*var(--u))) }
+  100% { opacity:1; transform:scale(1) translateY(calc(-2*var(--u))) } /* == float 0% */
+}
+
+/* --- VIP chain ------------------------------------------------------ */
+.gc-anim.gc-enter .gc-orn-bottom { animation: gc-chain-in 700ms var(--gc-ease) 220ms both; }
+@keyframes gc-chain-in {
+  0%   { opacity:0; transform:translateY(calc(-10*var(--u))) }
+  100% { opacity:1; transform:translateY(0) }
+}
+
+/* --- blink sparkles -------------------------------------------------
+   Two independent requirements:
+   a) WITHIN one bubble the two blink layers must alternate, so they share
+      one 4.6s cycle and the ghost layer is offset by exactly half of it.
+   b) ACROSS bubbles they must not all blink at once, so every bubble gets
+      its own --gc-phase (set in JS) shifting the whole cycle.
+   -------------------------------------------------------------------- */
+.gc-orn-blinkCrystal,
+.gc-orn-blinkGhost { animation: gc-blink 4.6s ease-in-out infinite; }
+.gc-orn-blinkCrystal { animation-delay: calc(var(--gc-phase, 0) * -4.6s); }
+.gc-orn-blinkGhost   { animation-delay: calc(var(--gc-phase, 0) * -4.6s - 2.3s); }
+@keyframes gc-blink { 0%,100%{opacity:.38} 50%{opacity:.92} }
+
+.gc-anim.gc-enter .gc-orn-blinkCrystal,
+.gc-anim.gc-enter .gc-orn-blinkGhost {
+  animation: gc-spark-in 560ms ease-out 900ms both;
+}
+@keyframes gc-spark-in {
+  0%   { opacity:0; transform:scale(.9) }
+  70%  { opacity:.9; transform:scale(1) }
+  100% { opacity:.38; transform:scale(1) }   /* == gc-blink 0% */
+}
+
+/* ---------------------------------------------------------------------
+   5. GHOST FLAMES
+   Split out of the ghost at build time: CSS cannot reach inside a <use>
+   shadow tree, so each flame is its own <svg> layer sharing the ghost
+   viewBox. --fdur / --fdelay are written per flame in JS and already carry
+   the per-bubble phase, so no two flames -- and no two bubbles -- flicker
+   on the same beat. The durations are also deliberately unrelated to the
+   4.6s blink cycle so the two effects never lock together.
+   --------------------------------------------------------------------- */
+.gc-flame {
+  position:absolute; overflow:visible; pointer-events:none; z-index:4;
+  transform-box: view-box;
+  transform-origin: var(--fx, 50%) var(--fy, 70%);
+  animation: gc-flame-dance var(--fdur, 2.6s) ease-in-out infinite;
+  animation-delay: var(--fdelay, 0s);
+}
+/* Both axes stay at or below 1 so the flame bitmap is never upscaled. The
+   flicker still reads the same because the squash/stretch is relative. */
+@keyframes gc-flame-dance {
+  0%   { transform:translateY(0) scale(1,1);                       opacity:.80 }
+  20%  { transform:translateY(calc(-2.5*var(--u))) scale(.88,1);   opacity:1 }
+  42%  { transform:translateY(calc(-1*var(--u)))   scale(1,.88);   opacity:.70 }
+  63%  { transform:translateY(calc(-3.5*var(--u))) scale(.9,.99);  opacity:.97 }
+  82%  { transform:translateY(calc(-1.5*var(--u))) scale(.99,.9);  opacity:.78 }
+  100% { transform:translateY(0) scale(1,1);                       opacity:.80 }
+}
+/* ignite once the ghost has landed - opacity + rise only, no growth */
+.gc-anim.gc-enter .gc-flame { animation: gc-flame-in 620ms ease-out 900ms both; }
+@keyframes gc-flame-in {
+  0%   { opacity:0; transform:translateY(calc(4*var(--u))) scale(1,.9) }
+  60%  { opacity:1; transform:translateY(calc(-2*var(--u))) scale(1,1) }
+  100% { opacity:.80; transform:translateY(0) scale(1,1) }   /* == dance 0% */
+}
+
+/* ---------------------------------------------------------------------
+   6. MAGIC LAYER (client brief)
+   Sits BEHIND the rock frame on purpose (z-index 0). Painted in front, the
+   aura washes over the flat panel and tints the chat text; behind it, the
+   light only escapes through the transparent area around the crystal, which
+   reads as the crystal radiating outward.
+   --------------------------------------------------------------------- */
+.gc-magic { position:absolute; pointer-events:none; z-index:0; overflow:visible; }
+
+.gc-aura {
+  position:absolute; inset:-16% -12%;
+  border-radius:50%;
+  background:radial-gradient(closest-side,
+             var(--gc-role-color,#B5C1DC) 0%,
+             color-mix(in srgb, var(--gc-role-color,#B5C1DC) 45%, transparent) 42%,
+             transparent 74%);
+  opacity:0;
+  will-change:transform, opacity;
+  animation: gc-aura-pulse 7.2s ease-in-out infinite;
+}
+@keyframes gc-aura-pulse {
+  0%,100% { opacity:.20; transform:scale(.94) }
+  50%     { opacity:.52; transform:scale(1.07) }
+}
+/* the magic "lands" with the crystal, then settles onto the idle pulse */
+.gc-anim.gc-enter .gc-aura { animation: gc-aura-burst 1200ms ease-out 420ms both; }
+@keyframes gc-aura-burst {
+  0%   { opacity:0;   transform:scale(.30) }
+  28%  { opacity:.62; transform:scale(1.12) }
+  100% { opacity:.20; transform:scale(.94) }   /* == pulse 0% */
+}
+
+/* shockwave ring, entrance only */
+.gc-ring {
+  position:absolute; inset:0; border-radius:50%;
+  border:calc(2*var(--u)) solid var(--gc-role-color,#B5C1DC);
+  opacity:0;
+}
+.gc-anim.gc-enter .gc-ring { animation: gc-ring-out 950ms cubic-bezier(.2,.75,.3,1) 460ms both; }
+@keyframes gc-ring-out {
+  0%   { opacity:0;   transform:scale(.25) }
+  22%  { opacity:.75; }
+  100% { opacity:0;   transform:scale(2) }
+}
+
+/* The glow is baked into the gradient instead of an animated box-shadow.
+   A moving box-shadow has to be re-blurred on the CPU every frame, once per
+   mote, per bubble - it was the most expensive thing in the idle loop. */
+.gc-mote {
+  position:absolute; left:50%; bottom:18%;
+  width:calc(var(--ms,5) * 3 * var(--u)); height:calc(var(--ms,5) * 3 * var(--u));
+  margin-left:calc((var(--mx,0) - var(--ms,5) * 1) * var(--u));
+  background:radial-gradient(circle closest-side,
+             var(--gc-role-color,#B5C1DC) 0%,
+             var(--gc-role-color,#B5C1DC) 22%,
+             color-mix(in srgb, var(--gc-role-color,#B5C1DC) 40%, transparent) 46%,
+             transparent 78%);
+  opacity:0;
+  animation: gc-mote-rise var(--mdur,5.2s) linear infinite;
+  animation-delay: var(--mdelay,0s);
+}
+@keyframes gc-mote-rise {
+  0%   { opacity:0; transform:translate3d(0,0,0) scale(.5) }
+  12%  { opacity:.95; }
+  50%  { transform:translate3d(calc(var(--mdrift,6) * var(--u)), calc(-34*var(--u)), 0) scale(1) }
+  78%  { opacity:.5 }
+  100% { opacity:0; transform:translate3d(calc(var(--mdrift,6) * -0.6 * var(--u)), calc(-68*var(--u)), 0) scale(.35) }
+}
+/* motes only start once the crystal exists */
+.gc-anim.gc-enter .gc-mote { animation:none; opacity:0; }
+
+/* ---------------------------------------------------------------------
+   7. Body / text
+   --------------------------------------------------------------------- */
+.gc-body {
+  position:relative; z-index:2;
+  display:flex; flex-direction:column; justify-content:center;
+  width:fit-content; max-width:100%;
+  min-height:calc(225*var(--u));
+  padding: calc((24 + var(--gc-pad-top,16)) * var(--u)) calc(120*var(--u))
+           calc((var(--gc-pad-bottom,22) + var(--gc-inset-bottom,30)) * var(--u)) calc(142*var(--u));
+  box-sizing:border-box;
+}
+.gc-role-subscriber, .gc-role-moderator, .gc-role-streamer { --gc-inset-bottom:16; }
+.gc-role-viewers, .gc-role-follower, .gc-role-vip { --gc-inset-bottom:30; }
+.gc-role-vip { margin-bottom: calc(79*var(--u)); }
+
+.gc-head { display:flex; align-items:center; gap:calc(16*var(--u)); min-height:calc(41*var(--u)); margin-bottom:0; }
+.gc-badge { flex:0 0 auto; width:calc(40*var(--u)); height:calc(41*var(--u)); display:block; }
+.gc-name {
+  font-family:var(--gc-name-font); font-weight:700;
+  font-size:calc(30*var(--u)); letter-spacing:calc(1.2*var(--u));
+  line-height:1.1; text-transform:uppercase;
+  color:var(--gc-role-color,#B5C1DC); text-shadow:var(--gc-text-shadow);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.gc-text {
+  margin-top:calc(var(--gc-name-gap,2) * var(--u)); padding-left:calc(56*var(--u));
+  font-family:var(--gc-text-font); font-size:calc(27*var(--u)); line-height:1.42;
+  color:var(--gc-text-color); text-shadow:var(--gc-text-shadow);
+  word-wrap:break-word; overflow-wrap:anywhere;
+  max-width:100%;
+}
+.gc-text .gc-emote { height:calc(34*var(--u)); vertical-align:middle; margin:0 calc(2*var(--u)); }
+
+/* A single Twitch emote/GIF/sticker gets a dedicated visual treatment. */
+.gc-msg.gc-emote-only { min-height:calc(205*var(--u)); }
+.gc-msg.gc-emote-only .gc-body {
+  min-height:calc(205*var(--u));
+  padding-top:calc((18 + var(--gc-pad-top,16)) * var(--u));
+  padding-bottom:calc((var(--gc-pad-bottom,22) + var(--gc-inset-bottom,30)) * var(--u));
+}
+.gc-msg.gc-emote-only .gc-text .gc-emote {
+  height:calc(92*var(--u));
+  max-width:calc(180*var(--u));
+  object-fit:contain;
+  margin:calc(5*var(--u)) calc(2*var(--u));
+}
+
+/* Older bubbles keep the client's crystal + magic identity (crystal breathe
+   and the role-coloured aura), but every SECONDARY loop is switched off.
+   A full bubble runs ~15 infinite animations; with 8 of those on screen the
+   compositor cannot keep 60fps in OBS. A lite bubble runs 3.
+   Anything switched off here is parked on a static value that matches the
+   middle of its loop, so demoting a bubble is not visible as a jump. */
+.gc-msg.gc-idle-lite .gc-mote { display:none; }
+.gc-msg.gc-idle-lite .gc-orn-blinkCrystal,
+.gc-msg.gc-idle-lite .gc-orn-blinkGhost { animation:none; opacity:.42; }
+.gc-msg.gc-idle-lite .gc-flame { animation:none; opacity:.82; }
+.gc-msg.gc-idle-lite .gc-orn-ghost { animation:none; transform:translateY(calc(1*var(--u))); }
+.gc-msg.gc-idle-lite .gc-ring { display:none; }
+.gc-msg.gc-idle-lite .gc-glow { animation-duration:18s; }
+.gc-msg.gc-idle-lite .gc-aura { animation-duration:13s; }
+.gc-msg.gc-idle-lite .gc-orn-crystal { animation-duration:9s; }
+
+/* Messages outside the OBS/browser viewport should consume no animation time. */
+.gc-msg.gc-offscreen .gc-anim,
+.gc-msg.gc-offscreen .gc-anim * { animation-play-state:paused !important; }
+
+/* Typing reveal: hover up from below only. No blur, no lateral drift, and
+   no caret -- every word already occupies its final layout box on frame 1,
+   so the bubble height never jumps. */
+.gc-w { display:inline-block; position:relative; }
+.gc-text.gc-typing .gc-w { animation: gc-word 560ms var(--gc-ease) both; }
+@keyframes gc-word {
+  from { opacity:0; transform:translate3d(0, calc(13*var(--u)), 0); }
+  to   { opacity:1; transform:translate3d(0, 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-anim, .gc-anim.gc-enter, .gc-anim.gc-leave, .gc-anim.gc-idle,
+  .gc-anim .gc-body, .gc-frame, .gc-glow,
+  .gc-text.gc-typing .gc-w,
+  .gc-orn, .gc-orn-crystal, .gc-orn-ghost,
+  .gc-orn-blinkCrystal, .gc-orn-blinkGhost,
+  .gc-flame, .gc-aura, .gc-ring, .gc-mote,
+  .gc-anim.gc-enter .gc-frame, .gc-anim.gc-enter .gc-body,
+  .gc-anim.gc-enter .gc-orn-crystal, .gc-anim.gc-enter .gc-orn-ghost,
+  .gc-anim.gc-enter .gc-orn-bottom, .gc-anim.gc-enter .gc-flame,
+  .gc-anim.gc-enter .gc-aura, .gc-anim.gc-enter .gc-ring,
+  .gc-anim.gc-enter .gc-orn-blinkCrystal,
+  .gc-anim.gc-enter .gc-orn-blinkGhost { animation:none !important; }
+  .gc-mote, .gc-ring { display:none !important; }
+  .gc-frame, .gc-body, .gc-orn, .gc-flame { opacity:1 !important; transform:none !important; }
+  .gc-alert-card, .gc-alert-copy, .gc-alert-name, .gc-alert-label,
+  .gc-alert-card::after, .gc-alert-aura, .gc-alert-ring,
+  .gc-alert-mote { animation:none !important; transform:none !important; }
+  .gc-alert-card, .gc-alert-name, .gc-alert-label { opacity:1 !important; }
+  /* Rings and motes exist only as motion, so there is nothing to show when
+     motion is off. The aura stays as a soft static wash. */
+  .gc-alert-ring, .gc-alert-mote { display:none !important; }
+  .gc-alert-aura { opacity:calc(var(--gc-alert-glow,1) * .18) !important; }
+  .gc-glow { opacity:var(--gc-glow-rest) }
+  .gc-aura { opacity:.22 }
+}
