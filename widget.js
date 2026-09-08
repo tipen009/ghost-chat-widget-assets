@@ -30,7 +30,7 @@
     scale: 0.58,
     width: 560,
     gap: 14,
-    maxMessages: 8,
+    maxMessages: 6,
     hideAfter: 0,          // seconds, 0 = never remove
     direction: 'bottom',   // 'bottom' = newest at the bottom, 'top' = newest on top
     showEmotes: true,
@@ -48,10 +48,10 @@
     typing: true,          // reveal the message word by word
     typingSpeed: 72,       // ms between words (auto-compressed on long messages)
     typingMax: 2400,       // ms, longest total reveal for one message
-    idle: true,            // breathing glow while the message sits there
+    idle: false,           // pause continuous idle glow to protect frame rate
     flames: true,          // flickering fire wisps on the ghost ornament
     magic: true,           // role-coloured aura + rising motes on the crystal
-    motes: 5,              // how many magic sparks per bubble
+    motes: 3,              // keep magic identity with a smaller particle budget
     fullIdleMessages: 2,   // newest bubbles that keep the complete idle effects
     alerts: true,          // follower/sub/cheer/tip/raid cards in the chat stack
     alertDuration: 8       // seconds before an alert card leaves; 0 = never auto-hide
@@ -662,10 +662,10 @@
      event. Colour and glow strength are handled in CSS via --gc-alert-color
      and --gc-alert-glow. */
   var ALERT_TIER = {
-    followed:   { motes: 4,  rings: 0, holdBonus: 0 },
-    subscribed: { motes: 7,  rings: 1, holdBonus: 0 },
-    tipped:     { motes: 10, rings: 2, holdBonus: 2 },
-    raided:     { motes: 10, rings: 2, holdBonus: 2 }
+    followed:   { motes: 2, rings: 0, holdBonus: 0 },
+    subscribed: { motes: 3, rings: 1, holdBonus: 0 },
+    tipped:     { motes: 4, rings: 1, holdBonus: 2 },
+    raided:     { motes: 4, rings: 1, holdBonus: 2 }
   };
   var ALERT_TIER_DEFAULT = { motes: 6, rings: 1, holdBonus: 0 };
   var alertSeq = 0;
