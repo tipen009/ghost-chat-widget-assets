@@ -870,7 +870,10 @@
     if (types.indexOf('moderator') > -1 || tags.mod === '1') return 'moderator';
     if (types.indexOf('vip') > -1) return 'vip';
     if (types.indexOf('subscriber') > -1 || types.indexOf('founder') > -1 || tags.subscriber === '1') return 'subscriber';
-    if (CFG.followerRole && followers[(data.nick || '').toLowerCase()]) return 'follower';
+    var followerKeys = [data.nick, data.displayName, data.userId, tags['user-id']].filter(Boolean)
+      .map(function (v) { return String(v).toLowerCase(); });
+    if (CFG.followerRole && followerKeys.some(function (k) { return followers[k]; })) return 'follower';
+    if (CFG.followerRole && (data.isFollower === true || data.isFollower === 'true' || data.isFollower === 1)) return 'follower';
     return 'viewers';
   }
 
@@ -1060,7 +1063,8 @@
     }
     var eventName = event.name || event.username || (event.data && (event.data.name || event.data.username)) || '';
     if ((listener === 'follower-latest' || listener === 'follow-latest' || listener === 'follow') && eventName) {
-      followers[String(eventName).toLowerCase()] = true;
+      [eventName, event.username, event.userId, event.userid, event.data && event.data.userId]
+        .filter(Boolean).forEach(function (v) { followers[String(v).toLowerCase()] = true; });
       addAlert('followed', eventName, event);
       return;
     }
