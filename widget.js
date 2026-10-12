@@ -6,6 +6,12 @@
 (function () {
   'use strict';
 
+  /* StreamElements can re-evaluate a Custom Widget script while its editor
+     refreshes fields. Never install a second copy of the widget listeners on
+     the same page; otherwise one button click produces duplicate bubbles. */
+  if (window.__GHOST_CHAT_WIDGET_LOADED__) return;
+  window.__GHOST_CHAT_WIDGET_LOADED__ = true;
+
   var SVGNS = 'http://www.w3.org/2000/svg';
   var A = window.GHOST_CHAT_ASSETS || {};
   var ALERT_ASSETS = window.GHOST_ALERT_ASSETS || {};
@@ -960,6 +966,9 @@
     applyStyleVars();
   });
 
+  var lastTestEventKey = '';
+  var lastTestEventAt = 0;
+
   window.addEventListener('onEventReceived', function (obj) {
     var detail = obj.detail || {};
     var listener = detail.listener;
@@ -979,6 +988,42 @@
       ].map(function (v) { return v == null ? '' : String(v).toLowerCase(); })
        .join(' ');
       var has = function (s) { return hay.indexOf(s) > -1; };
+
+      /* A single Fields click may be reported once with the field key and
+         once with its button value. Normalize both payloads to the same
+         semantic command and ignore only an immediate duplicate. Live chat
+         and alert events use different listeners and are not affected. */
+      var testKey;
+      if (has('clear')) {
+        testKey = 'clear';
+      } else if (has('all')) {
+        testKey = 'alerts:all';
+      } else if (has('alert')) {
+        testKey = has('raid') ? 'alert:raid'
+                 : has('cheer') ? 'alert:cheer'
+                 : has('tip') ? 'alert:tip'
+                 : has('sub') ? 'alert:subscriber'
+                 : has('follow') ? 'alert:follower'
+                 : 'alert';
+      } else if (has('streamer')) {
+        testKey = 'role:streamer';
+      } else if (has('moderator') || has('mod')) {
+        testKey = 'role:moderator';
+      } else if (has('subscriber') || has('sub') || has('randomlong')) {
+        testKey = 'role:subscriber';
+      } else if (has('follower') || has('follow') || has('randomemote')) {
+        testKey = 'role:follower';
+      } else if (has('vip')) {
+        testKey = 'role:vip';
+      } else if (has('viewer') || has('randomshort')) {
+        testKey = 'role:viewers';
+      } else {
+        testKey = 'chat';
+      }
+      var testNow = Date.now();
+      if (lastTestEventKey === testKey && testNow - lastTestEventAt < 500) return;
+      lastTestEventKey = testKey;
+      lastTestEventAt = testNow;
 
       if (has('clear')) {
         var root = ensureRoot();
