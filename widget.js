@@ -1033,7 +1033,7 @@
 
       var alertName = CFG.testAlertName || 'AlertViewer';
       var alertArgs = { followed:{}, subscribed:{}, cheered:{ amount:500 },
-                        tipped:{ amount:250000, currency:'IDR' }, raided:{ viewers:128 } };
+                        tipped:{ amount:250000, currency:'USD' }, raided:{ viewers:128 } };
 
       if (has('alert')) {
         /* "all" first: test-all-alerts also contains "alert". */

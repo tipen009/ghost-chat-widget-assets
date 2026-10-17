@@ -133,6 +133,16 @@ html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
 }
 .gc-alert-tipped .gc-alert-copy { color:#FEDB54; top:38%; }
 .gc-alert-raided .gc-alert-copy { color:#8EF0FE; }
+/* The raid caption is longer than the other tiers. Keep its text inside the
+   clear centre panel so the final line cannot run into the right crystal. */
+.gc-alert-raided .gc-alert-copy { left:34%; top:35%; width:39%; }
+.gc-alert-raided .gc-alert-label {
+  margin-top:calc(19*var(--u));
+  font-size:calc(12*var(--u) + 1px);
+  line-height:1.15;
+  letter-spacing:.035em;
+  white-space:normal;
+}
 .gc-alert-card::after {
   content:""; position:absolute; z-index:1; right:3%; bottom:5%;
   width:25%; aspect-ratio:1; border-radius:50%; pointer-events:none;
