@@ -123,7 +123,8 @@ html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
   text-shadow:0 2px 5px rgba(0,0,0,.9);
 }
 .gc-alert-name {
-  overflow:hidden; color:inherit; font:700 calc(32*var(--u) - 1px)/1 var(--gc-name-font);
+  overflow:hidden; color:inherit; font-size:var(--gc-alert-name-size,calc(32*var(--u) - 1px));
+  font-weight:700; line-height:1; font-family:var(--gc-name-font);
   letter-spacing:.035em; text-overflow:ellipsis; white-space:nowrap;
 }
 .gc-alert-label {

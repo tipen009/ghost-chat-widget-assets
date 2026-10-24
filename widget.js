@@ -725,6 +725,11 @@
        usernames while keeping the frame inside the widget bounds. */
     var alertWidth = Math.min(94, Math.max(68, 55 + Math.max(0, nameLength - 8) * 3.2));
     msg.style.setProperty('--gc-alert-width', alertWidth + '%');
+    /* Keep unusually long Twitch names readable after the frame reaches its
+       safe maximum width. Normal names remain at the original size. */
+    var baseNamePx = Math.max(12, 32 * (Number(CFG.scale) || 0.58) - 1);
+    var namePx = Math.max(12, Math.min(baseNamePx, baseNamePx * 20 / Math.max(nameLength, 20)));
+    msg.style.setProperty('--gc-alert-name-size', namePx.toFixed(2) + 'px');
 
     var card = document.createElement('div');
     card.className = 'gc-alert-card gc-alert-pending';
