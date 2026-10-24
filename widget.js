@@ -727,8 +727,8 @@
     msg.style.setProperty('--gc-alert-width', alertWidth + '%');
     /* Keep unusually long Twitch names readable after the frame reaches its
        safe maximum width. Normal names remain at the original size. */
-    var baseNamePx = Math.max(12, 32 * (Number(CFG.scale) || 0.58) - 1);
-    var namePx = Math.max(12, Math.min(baseNamePx, baseNamePx * 20 / Math.max(nameLength, 20)));
+    var baseNamePx = Math.max(13, 34 * (Number(CFG.scale) || 0.58));
+    var namePx = Math.max(13, Math.min(baseNamePx, baseNamePx * 20 / Math.max(nameLength, 20)));
     msg.style.setProperty('--gc-alert-name-size', namePx.toFixed(2) + 'px');
 
     var card = document.createElement('div');

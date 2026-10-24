@@ -118,28 +118,27 @@ html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
   display:block; width:100%; height:100%; overflow:visible;
 }
 .gc-alert-copy {
-  position:absolute; z-index:2; left:36%; top:37%; width:44%;
+  position:absolute; z-index:2; left:31%; top:36%; width:46%;
   color:#B5C1DC; text-align:center; pointer-events:none;
   text-shadow:0 2px 5px rgba(0,0,0,.9);
 }
 .gc-alert-name {
-  overflow:hidden; color:inherit; font-size:var(--gc-alert-name-size,calc(32*var(--u) - 1px));
+  overflow:hidden; color:inherit; font-size:var(--gc-alert-name-size,calc(34*var(--u)));
   font-weight:700; line-height:1; font-family:var(--gc-name-font);
   letter-spacing:.035em; text-overflow:ellipsis; white-space:nowrap;
 }
 .gc-alert-label {
   margin-top:calc(27*var(--u)); color:inherit;
-  font:600 calc(13*var(--u) + 2px)/1 var(--gc-name-font);
+  font:600 calc(14*var(--u) + 2px)/1 var(--gc-name-font);
   letter-spacing:.06em; white-space:nowrap;
 }
-.gc-alert-tipped .gc-alert-copy { color:#FEDB54; top:38%; }
+.gc-alert-tipped .gc-alert-copy { color:#FEDB54; }
 .gc-alert-raided .gc-alert-copy { color:#8EF0FE; }
 /* The raid caption is longer than the other tiers. Keep its text inside the
    clear centre panel so the final line cannot run into the right crystal. */
-.gc-alert-raided .gc-alert-copy { left:34%; top:35%; width:39%; }
 .gc-alert-raided .gc-alert-label {
   margin-top:calc(19*var(--u));
-  font-size:calc(12*var(--u) + 1px);
+  font-size:calc(13*var(--u) + 1px);
   line-height:1.15;
   letter-spacing:.035em;
   white-space:normal;
