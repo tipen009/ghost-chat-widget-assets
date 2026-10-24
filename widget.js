@@ -720,7 +720,10 @@
     msg.className = 'gc-msg gc-alert-msg gc-alert-' + type;
     msg.dataset.alert = type;
     var nameLength = String(name || 'USERNAME').trim().length;
-    var alertWidth = Math.min(94, 55 + Math.max(0, nameLength - 12) * 1.7);
+    /* Alerts need a wider centre panel than the compact chat card. Start at
+       68% so normal names stay readable, then stretch smoothly for longer
+       usernames while keeping the frame inside the widget bounds. */
+    var alertWidth = Math.min(94, Math.max(68, 55 + Math.max(0, nameLength - 8) * 3.2));
     msg.style.setProperty('--gc-alert-width', alertWidth + '%');
 
     var card = document.createElement('div');
